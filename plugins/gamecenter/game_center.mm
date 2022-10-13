@@ -69,6 +69,12 @@ void GameCenter::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("get_pending_event_count"), &GameCenter::get_pending_event_count);
 	ClassDB::bind_method(D_METHOD("pop_pending_event"), &GameCenter::pop_pending_event);
+    ClassDB::bind_method(D_METHOD("get_player_alias"), &GameCenter::get_player_alias);
+    ClassDB::bind_method(D_METHOD("get_player_rank"), &GameCenter::get_player_rank);
+    ClassDB::bind_method(D_METHOD("get_player_friend_rank"), &GameCenter::get_player_rank);
+    ClassDB::bind_method(D_METHOD("get_friends_rank"), &GameCenter::get_player_rank);
+    ClassDB::bind_method(D_METHOD("fetch_leaderboards"), &GameCenter::fetch_leaderboards);
+    ClassDB::bind_method(D_METHOD("fetch_friend_leaderboards"), &GameCenter::fetch_friend_leaderboards);
 };
 
 Error GameCenter::authenticate() {
@@ -105,11 +111,14 @@ Error GameCenter::authenticate() {
 
 				if (@available(iOS 13, *)) {
 					ret["player_id"] = [player.teamPlayerID UTF8String];
+                    ret["player_alias"] = [player.displayName UTF8String];
 				} else {
 					ret["player_id"] = [player.playerID UTF8String];
+                    ret["player_alias"] = [player.displayName UTF8String];
 				}
 
 				GameCenter::get_singleton()->authenticated = true;
+                GameCenter::get_singleton()->loggedin_player_alias = [player.displayName UTF8String];
 			} else {
 				ret["result"] = "error";
 				ret["error_code"] = (int64_t)error.code;
@@ -127,6 +136,10 @@ Error GameCenter::authenticate() {
 bool GameCenter::is_authenticated() {
 	return authenticated;
 };
+
+Variant GameCenter::get_player_alias(){
+    return loggedin_player_alias;
+}
 
 Error GameCenter::post_score(Dictionary p_score) {
 	ERR_FAIL_COND_V(!p_score.has("score") || !p_score.has("category"), ERR_INVALID_PARAMETER);
@@ -289,6 +302,143 @@ void GameCenter::reset_achievements() {
 		pending_events.push_back(ret);
 	}];
 };
+
+Variant GameCenter::get_friends_rank() {
+    return friends_rank;
+};
+
+int GameCenter::get_player_rank() {
+    return player_rank;
+};
+
+int GameCenter::get_player_friend_rank(){
+    return player_friend_rank;
+}
+
+void GameCenter::fetch_leaderboards(){
+    
+    if (@available(iOS 14, *)){
+        Dictionary ret;
+        
+        
+        [GKLeaderboard loadLeaderboardsWithCompletionHandler:^(NSArray * leaderboards, NSError * error){
+            if(error == nil){
+                
+                GKLeaderboard * leaderboard = (GKLeaderboard *) leaderboards[0];
+                if (leaderboard != nil){
+                    NSLog(@"Loaded leaderboards succesfully -- Leaderboard found: %@)", ((GKLeaderboard * )leaderboards[0]).title);
+                    [leaderboard loadEntriesForPlayerScope:GKLeaderboardPlayerScopeGlobal timeScope:GKLeaderboardTimeScopeAllTime range:NSMakeRange(1,100) completionHandler:^(GKLeaderboardEntry * localPlayerEntry,
+                                                                                                                                                                               NSArray<GKLeaderboardEntry *> *entries,
+                                                                                                                                                                               NSInteger totalPlayerCount, NSError * error){
+                        GodotStringArray names;
+                        GodotIntArray scores;
+                        GodotIntArray ranks;
+                        Dictionary ret;
+                        ret["type"] = "fetch_leaderboards";
+                        if(error == nil){
+                            // Store localPlayer score and rank
+                            NSLog(@"Loaded PlayerRank %i", (int) localPlayerEntry.rank);
+                            ret["result"] = "ok";
+                            ret["player_rank"] = (int) localPlayerEntry.rank;
+                            ret["player_score"] = (int) localPlayerEntry.score;
+                            ret["total_player_count"] = (int) totalPlayerCount;
+                            GameCenter::get_singleton()->player_rank = (int) localPlayerEntry.rank;
+                            GameCenter::get_singleton()->player_high_score = (int) localPlayerEntry.score;
+                            
+                            for (NSUInteger i = 0; i < [entries count]; i++) {
+
+                                GKLeaderboardEntry * entry = [entries objectAtIndex:i];
+                                NSLog(@"Found leaderboard entry - name: %@ with rank:%i and score:%i",entry.player.displayName, (int) entry.rank, (int)entry.score);
+                                const char *str = [entry.player.displayName UTF8String];
+                                names.push_back(String::utf8(str != NULL ? str : ""));
+                                ranks.push_back(entry.rank);
+                                scores.push_back(entry.score);
+                            }
+                            
+                              ret["names"] = names;
+                              ret["scores"] = scores;
+                              ret["ranks"] = ranks;
+                        }else{
+                            NSLog(@"Failed to load leaderboard entries %i", (int) error.code);
+                            ret["result"] = "error";
+                            ret["error_code"] = (int64_t)error.code;
+                            ret["error_description"] = [error.localizedDescription UTF8String];
+                            
+                           
+                        }
+                        
+                        pending_events.push_back(ret);
+                    }];
+                    
+                }
+            }else{
+                NSLog(@"Failed to fetch leaderboards --> ERROR :%i",(int) error.code);
+            }
+        }];
+    }
+    
+}
+
+void GameCenter::fetch_friend_leaderboards(){
+    
+    if (@available(iOS 14, *)){
+        [GKLeaderboard loadLeaderboardsWithCompletionHandler:^(NSArray * leaderboards, NSError * error){
+            if(error == nil){
+                
+                GKLeaderboard * leaderboard = (GKLeaderboard *) leaderboards[0];
+                if (leaderboard != nil){
+                    NSLog(@"Loaded leaderboards succesfully -- Leaderboard found: %@)", ((GKLeaderboard * )leaderboards[0]).title);
+               
+                    // Now load friends
+                    [leaderboard loadEntriesForPlayerScope:GKLeaderboardPlayerScopeFriendsOnly timeScope:GKLeaderboardTimeScopeAllTime range:NSMakeRange(1,100) completionHandler:^(GKLeaderboardEntry * localPlayerEntry,
+                                                                                                                                                                               NSArray<GKLeaderboardEntry *> *entries,
+                                                                                                                                                                               NSInteger totalPlayerCount, NSError * error){
+                        Dictionary ret;
+                        ret["type"] = "fetch_friend_leaderboards";
+                        if(error == nil){
+                            
+                            GodotStringArray names;
+                            GodotIntArray scores;
+                            GodotIntArray ranks;
+                            // Store localPlayer score and rank
+                            player_friend_rank = localPlayerEntry.rank;
+                            player_high_score = localPlayerEntry.score;
+                            for (NSUInteger i = 0; i < [entries count]; i++) {
+
+                                GKLeaderboardEntry * entry = [entries objectAtIndex:i];
+                                NSLog(@"Found friend - name: %@ with rank:%i and score:%i",entry.player.displayName, (int) entry.rank, (int) entry.score);
+                                const char *str = [entry.player.displayName UTF8String];
+                                names.push_back(String::utf8(str != NULL ? str : ""));
+
+                                ranks.push_back(entry.rank);
+                                scores.push_back(entry.score);
+                            }
+                            
+                            ret["result"] = "ok";
+                            ret["player_rank"] = (int) localPlayerEntry.rank;
+                            ret["player_score"] = (int) localPlayerEntry.score;
+                            ret["names"] = names;
+                            ret["scores"] = scores;
+                            ret["ranks"] = ranks;
+                            
+                        }else{
+                            NSLog(@"Failed to load leaderboard entries %i", (int) error.code);
+                            NSLog(@"Failed to load leaderboard entries %i", (int) error.code);
+                            ret["result"] = "error";
+                            ret["error_code"] = (int64_t)error.code;
+                            ret["error_description"] = [error.localizedDescription UTF8String];
+                        }
+                        
+                        pending_events.push_back(ret);
+                    }];
+                }
+            }else{
+                NSLog(@"Failed to fetch leaderboards --> ERROR :%i",(int) error.code);
+            }
+        }];
+    }
+   
+}
 
 Error GameCenter::show_game_center(Dictionary p_params) {
 	ERR_FAIL_COND_V(!NSProtocolFromString(@"GKGameCenterControllerDelegate"), FAILED);

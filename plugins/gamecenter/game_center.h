@@ -49,6 +49,12 @@ class GameCenter : public Object {
 	List<Variant> pending_events;
 
 	bool authenticated;
+    Variant loggedin_player_alias;
+    Variant friends_rank;
+    int player_rank;
+
+    int player_friend_rank;
+    int player_high_score;
 
 	void return_connect_error(const char *p_error_description);
 
@@ -68,6 +74,14 @@ public:
 
 	int get_pending_event_count();
 	Variant pop_pending_event();
+    
+    Variant get_player_alias();
+    int get_player_rank();
+    int get_player_friend_rank();
+    Variant get_friends_rank();
+    
+    void fetch_leaderboards();
+    void fetch_friend_leaderboards();
 
 	static GameCenter *get_singleton();
 
